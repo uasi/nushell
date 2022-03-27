@@ -397,8 +397,9 @@ impl ExternalCommand {
 
     /// Spawn a command without shelling out to an external shell
     pub fn spawn_simple_command(&self, cwd: &str) -> Result<std::process::Command, ShellError> {
-        let head = trim_enclosing_quotes(&self.name.item);
+        let (head, _) = trim_enclosing_quotes(&self.name.item);
         let head = if head.starts_with('~') || head.starts_with("..") {
+            // Note that we expand ~ or .. for head even if quoted
             nu_path::expand_path_with(head, cwd)
                 .to_string_lossy()
                 .to_string()
@@ -409,11 +410,12 @@ impl ExternalCommand {
         let mut process = std::process::Command::new(&head);
 
         for arg in self.args.iter() {
+            let (item, quoted) = trim_enclosing_quotes(&arg.item);
             let mut arg = Spanned {
-                item: trim_enclosing_quotes(&arg.item),
+                item,
                 span: arg.span,
             };
-            arg.item = if arg.item.starts_with('~') || arg.item.starts_with("..") {
+            arg.item = if !quoted && (arg.item.starts_with('~') || arg.item.starts_with("..")) {
                 nu_path::expand_path_with(&arg.item, cwd)
                     .to_string_lossy()
                     .to_string()
@@ -423,7 +425,7 @@ impl ExternalCommand {
 
             let cwd = PathBuf::from(cwd);
 
-            if arg.item.contains('*') {
+            if !quoted && arg.item.contains('*') {
                 if let Ok((prefix, matches)) = nu_engine::glob_from(&arg, &cwd, self.name.span) {
                     let matches: Vec<_> = matches.collect();
 
@@ -516,13 +518,13 @@ fn shell_arg_escape(arg: &str) -> String {
     }
 }
 
-fn trim_enclosing_quotes(input: &str) -> String {
+fn trim_enclosing_quotes(input: &str) -> (String, bool) {
     let mut chars = input.chars();
 
     match (chars.next(), chars.next_back()) {
-        (Some('"'), Some('"')) => chars.collect(),
-        (Some('\''), Some('\'')) => chars.collect(),
-        _ => input.to_string(),
+        (Some('"'), Some('"')) => (chars.collect(), true),
+        (Some('\''), Some('\'')) => (chars.collect(), true),
+        _ => (input.to_string(), false),
     }
 }
 
